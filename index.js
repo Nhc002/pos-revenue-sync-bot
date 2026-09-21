@@ -1,36 +1,50 @@
 const cron = require('node-cron');
 const config = require('./config');
 const logger = require('./utils/logger');
-const { scrapeShiftReport } = require('./services/posScraper');
-const { syncToGoogleSheets } = require('./services/sheetsSync');
+const { scrapeAllPOSData } = require('./services/posScraper');
+const { syncToGoogleSheets, syncCashbookToGoogleSheets } = require('./services/sheetsSync');
 
 /**
- * Thực thi quy trình cào dữ liệu và đồng bộ doanh thu
+ * Thực thi quy trình cào dữ liệu và đồng bộ doanh thu ca & thu chi
  */
 async function executeSyncTask() {
   logger.info('===========================================================');
-  logger.info('=== BẮT ĐẦU TIẾN TRÌNH TỰ ĐỘNG ĐỒNG BỘ DOANH THU POS ===');
+  logger.info('=== BẮT ĐẦU TIẾN TRÌNH TỰ ĐỘNG ĐỒNG BỘ POS (DOANH THU & THU CHI) ===');
   logger.info('===========================================================');
 
   try {
-    // 1. Trích xuất dữ liệu đóng ca từ POS
-    const shiftData = await scrapeShiftReport();
+    // 1. Trích xuất dữ liệu đóng ca & thu chi từ POS trong 1 phiên đăng nhập
+    const { shiftData, cashbookData } = await scrapeAllPOSData();
 
-    if (!shiftData || shiftData.length === 0) {
-      logger.warn('[MainTask] Không tìm thấy dữ liệu ca làm việc nào trên giao diện POS.');
-      return;
-    }
-
-    logger.info(`[MainTask] Tìm thấy ${shiftData.length} bản ghi ca làm việc. Đang chuẩn bị đồng bộ...`);
-
-    // 2. Gửi dữ liệu tới Google Apps Script Webhook
-    const syncResult = await syncToGoogleSheets(shiftData);
-    
-    if (syncResult && syncResult.success) {
-      logger.info('✅ [MainTask] Hoàn tất tiến trình đồng bộ doanh thu POS sang Google Sheets thành công!');
+    // 2. Đồng bộ báo cáo doanh thu ca
+    if (shiftData && shiftData.length > 0) {
+      logger.info(`[MainTask] Tìm thấy ${shiftData.length} bản ghi ca làm việc. Đang đồng bộ...`);
+      const syncResult = await syncToGoogleSheets(shiftData);
+      if (syncResult && syncResult.success) {
+        logger.info('✅ [MainTask] Hoàn tất đồng bộ doanh thu ca!');
+      } else {
+        logger.warn(`[MainTask] Đồng bộ doanh thu ca với cảnh báo: ${JSON.stringify(syncResult)}`);
+      }
     } else {
-      logger.warn(`[MainTask] Tiến trình hoàn tất với cảnh báo: ${JSON.stringify(syncResult)}`);
+      logger.warn('[MainTask] Không tìm thấy dữ liệu ca làm việc nào trên giao diện POS.');
     }
+
+    // 3. Đồng bộ báo cáo sổ quỹ thu chi
+    if (cashbookData && cashbookData.length > 0) {
+      logger.info(`[MainTask] Tìm thấy ${cashbookData.length} bản ghi Thu Chi. Đang đồng bộ...`);
+      const cashbookResult = await syncCashbookToGoogleSheets(cashbookData);
+      if (cashbookResult && cashbookResult.success) {
+        logger.info('✅ [MainTask] Hoàn tất đồng bộ sổ quỹ Thu Chi sang Google Sheets thành công!');
+      } else {
+        logger.warn(`[MainTask] Đồng bộ Thu Chi với cảnh báo: ${JSON.stringify(cashbookResult)}`);
+      }
+    } else {
+      logger.info('[MainTask] Không tìm thấy dữ liệu Thu Chi nào.');
+    }
+
+    logger.info('===========================================================');
+    logger.info('✅ [MainTask] Hoàn tất toàn bộ tiến trình đồng bộ!');
+    logger.info('===========================================================');
   } catch (error) {
     logger.error(`❌ [MainTask] Tiến trình tự động đồng bộ gặp lỗi: ${error.message}`);
   }

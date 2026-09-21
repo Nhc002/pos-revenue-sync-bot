@@ -1,8 +1,10 @@
 /**
  * GOOGLE APPS SCRIPT WEB APP - SIÊU TỐC KHÔNG HẰNG / KHÔNG TIMEOUT
+ * Hỗ trợ đồng bộ cả Báo Cáo Doanh Thu Ca và Báo Cáo Sổ Quỹ Thu Chi
  */
 
-var SHEET_NAME = "Doanh Thu Ca";
+var SHEET_REVENUE = "Doanh Thu Ca";
+var SHEET_CASHBOOK = "Thu Chi";
 
 function normalizeDateStr(val) {
   if (!val) return "";
@@ -19,6 +21,67 @@ function normalizeDateStr(val) {
   return str;
 }
 
+function handleCashbook(ss, body) {
+  var sheet = ss.getSheetByName(SHEET_CASHBOOK);
+  var headers = ["STT", "Mã ca", "Nhân viên", "Thời gian", "Loại", "Nghiệp vụ", "PTTT", "Ghi chú", "Số tiền", "Cập Nhật Sau Cùng"];
+  
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_CASHBOOK);
+  }
+
+  // Clear & reset headers trên mỗi lần đồng bộ full
+  sheet.clearContents();
+  sheet.appendRow(headers);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#3c78d8").setFontColor("#ffffff");
+
+  var items = Array.isArray(body.data) ? body.data : [];
+  var updatedAt = new Date().toLocaleString("vi-VN");
+
+  if (items.length === 0) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Đã làm sạch trang Thu Chi!", count: 0 }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var rows = [];
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var num = item.stt || (i + 1);
+    var shiftCode = item.shiftCode || "";
+    var employee = item.employee || "";
+    var datetime = item.datetime || "";
+    var type = item.type || "";
+    var category = item.category || "";
+    var paymentMethod = item.paymentMethod || "";
+    var note = item.note || "";
+    var rawAmount = item.amount || "";
+    
+    // Đổi số tiền dạng chuỗi "- 80,000 đ" thành số để Sheet tự format
+    var amountVal = rawAmount;
+    if (typeof rawAmount === "string") {
+      var isNegative = rawAmount.includes("-");
+      var cleaned = rawAmount.replace(/[^\d]/g, "");
+      if (cleaned !== "" && !isNaN(Number(cleaned))) {
+        amountVal = isNegative ? -Number(cleaned) : Number(cleaned);
+      }
+    }
+
+    rows.push([num, shiftCode, employee, datetime, type, category, paymentMethod, note, amountVal, updatedAt]);
+  }
+
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    // Định dạng VND cho cột Số tiền (Cột 9 - I)
+    sheet.getRange(2, 9, rows.length, 1).setNumberFormat("#,##0 \"đ\"");
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({
+    status: "success",
+    target: "cashbook",
+    count: rows.length,
+    timestamp: new Date().toISOString()
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
@@ -28,10 +91,16 @@ function doPost(e) {
 
     var body = JSON.parse(e.postData.contents);
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(SHEET_NAME);
 
+    // Rẽ nhánh xử lý nếu target là "cashbook" (Sổ Quỹ Thu Chi)
+    if (body.target === "cashbook") {
+      return handleCashbook(ss, body);
+    }
+
+    // Mặc định: Xử lý Báo cáo Doanh Thu Ca ("Doanh Thu Ca")
+    var sheet = ss.getSheetByName(SHEET_REVENUE);
     if (!sheet) {
-      sheet = ss.insertSheet(SHEET_NAME);
+      sheet = ss.insertSheet(SHEET_REVENUE);
       sheet.appendRow(["Ngày", "Ca 1", "Ca 2", "Ca 3", "Tổng Doanh Thu", "Cập Nhật Sau Cùng"]);
       sheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#4a86e8").setFontColor("#ffffff");
     }
@@ -139,5 +208,5 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  return HtmlService.createHtmlOutput("<h3>Webhook Đồng Bộ Doanh Thu POS đang hoạt động bình thường!</h3>");
+  return HtmlService.createHtmlOutput("<h3>Webhook Đồng Bộ Doanh Thu POS & Thu Chi đang hoạt động bình thường!</h3>");
 }

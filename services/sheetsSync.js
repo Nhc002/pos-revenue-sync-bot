@@ -107,6 +107,39 @@ async function syncToGoogleSheets(shiftData, customWebhookUrl = '', maxRetries =
   };
 }
 
+/**
+ * Đồng bộ dữ liệu Báo Cáo Thu Chi sang Google Sheets tab "Thu Chi"
+ */
+async function syncCashbookToGoogleSheets(cashbookData, customWebhookUrl = '', maxRetries = 3) {
+  const webhookUrl = customWebhookUrl || config.gasWebhookUrl;
+
+  if (!webhookUrl || webhookUrl.includes('YOUR_SCRIPT_ID') || webhookUrl.includes('AKfycbx_EXAMPLE_ID')) {
+    logger.warn('[CashbookSync] CẢNH BÁO: GAS_WEBHOOK_URL chưa được cấu hình chính xác trong .env! Bỏ qua gửi Thu Chi.');
+    return { success: false, reason: 'unconfigured_webhook' };
+  }
+
+  const items = Array.isArray(cashbookData) ? cashbookData : [];
+  logger.info(`[CashbookSync] Chuẩn bị gửi ${items.length} bản ghi Thu Chi tới Google Sheets (Tab "Thu Chi")...`);
+
+  const payload = {
+    target: 'cashbook',
+    action: 'sync',
+    source: 'POS_PUPPETEER_BOT',
+    timestamp: new Date().toISOString(),
+    data: items
+  };
+
+  const result = await postToWebhook(webhookUrl, payload, maxRetries);
+  if (result.success) {
+    logger.info(`✅ [CashbookSync] Đồng bộ thành công ${items.length} bản ghi Thu Chi! Phản hồi: ${JSON.stringify(result.data)}`);
+    return { success: true, count: items.length };
+  } else {
+    logger.error(`❌ [CashbookSync] Thất bại khi gửi dữ liệu Thu Chi sang Google Sheets sau ${maxRetries} lần thử.`);
+    return { success: false, count: 0 };
+  }
+}
+
 module.exports = {
-  syncToGoogleSheets
+  syncToGoogleSheets,
+  syncCashbookToGoogleSheets
 };

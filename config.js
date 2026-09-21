@@ -7,6 +7,7 @@ module.exports = {
     username: process.env.POS_USERNAME || '',
     password: process.env.POS_PASSWORD || '',
     reportUrl: process.env.POS_REPORT_URL || '',
+    cashbookReportUrl: process.env.POS_CASHBOOK_REPORT_URL || 'https://fabi.ipos.vn/report/cashbook',
     selectors: {
       usernameInput: process.env.POS_SELECTOR_USERNAME_INPUT || '#username',
       passwordInput: process.env.POS_SELECTOR_PASSWORD_INPUT || '#password',
