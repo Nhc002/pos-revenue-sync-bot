@@ -1,10 +1,154 @@
 /**
- * GOOGLE APPS SCRIPT WEB APP - SIÊU TỐC KHÔNG HẰNG / KHÔNG TIMEOUT
- * Hỗ trợ đồng bộ cả Báo Cáo Doanh Thu Ca và Báo Cáo Sổ Quỹ Thu Chi
+ * GOOGLE APPS SCRIPT WEB APP - SIÊU TỐC
+ * Đồng bộ Doanh Thu Ca & Thu Chi + Tự động điền vào trang tính Master (Tháng M/YYYY)
  */
 
 var SHEET_REVENUE = "Doanh Thu Ca";
 var SHEET_CASHBOOK = "Thu Chi";
+
+function removeAccents(str) {
+  if (!str) return "";
+  return String(str).toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .trim();
+}
+
+function parseNoteDetails(noteStr, rawAmount) {
+  var str = String(noteStr || "").trim();
+  var qty = 1;
+  var name = str;
+
+  // Pattern: "10 hộp sữa tươi", "20 rich lùn", "2kg xoài", "3 bịch trân châu"
+  var match = str.match(/^(\d+(?:[\.,]\d+)?)\s*(?:kg|gói|hộp|lon|bịch|chai|lít|quả|cái|cuộn)?\s*(.*)/i);
+  if (match && match[1] && match[2]) {
+    qty = parseFloat(match[1].replace(',', '.'));
+    name = match[2].trim();
+  }
+
+  if (!name) name = str;
+  return { qty: qty, name: name, raw: str };
+}
+
+function extractShortDate(datetimeStr) {
+  if (!datetimeStr) return "";
+  var match = String(datetimeStr).match(/(\d{1,2})[\/\-](\d{1,2})/);
+  if (match) {
+    var d = ("0" + match[1]).slice(-2);
+    var m = ("0" + match[2]).slice(-2);
+    return d + "/" + m;
+  }
+  return "";
+}
+
+function getActiveMonthSheet(ss) {
+  var now = new Date();
+  var month = now.getMonth() + 1;
+  var year = now.getFullYear();
+  var sheetName = "Tháng " + month + "/" + year;
+
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    // Fallback: tìm sheet có dạng "Tháng X/YYYY" gần nhất
+    var sheets = ss.getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      if (/^Tháng\s*\d{1,2}\/\d{4}/i.test(sheets[i].getName())) {
+        return sheets[i];
+      }
+    }
+  }
+  return sheet;
+}
+
+function updateMasterMonthSheet(ss, cashbookItems) {
+  var monthSheet = getActiveMonthSheet(ss);
+  if (!monthSheet) return;
+
+  // 1. Đọc BẢNG TỒN NGUYÊN VẬT LIỆU (Hàng 38 - 79)
+  var matRange = monthSheet.getRange(38, 1, 42, 7); // Cols A (1) -> G (7)
+  var matValues = matRange.getValues();
+
+  // 2. Đọc BẢNG SINH HOẠT (Hàng 10 - 25, Cột E(5) -> H(8))
+  var sinhHoatRange = monthSheet.getRange(10, 5, 16, 4);
+  var sinhHoatValues = sinhHoatRange.getValues();
+
+  for (var i = 0; i < cashbookItems.length; i++) {
+    var item = cashbookItems[i];
+    if (!item) continue;
+
+    var parsed = parseNoteDetails(item.note, item.amount);
+    var shortDate = extractShortDate(item.datetime);
+    var normName = removeAccents(parsed.name);
+
+    if (!normName) continue;
+
+    // Tìm kiếm trong BẢNG TỒN NGUYÊN VẬT LIỆU
+    var matchedMatIdx = -1;
+    for (var m = 0; m < matValues.length; m++) {
+      var matName = removeAccents(matValues[m][0]);
+      if (!matName) continue;
+
+      if (normName.includes(matName) || matName.includes(normName)) {
+        matchedMatIdx = m;
+        break;
+      }
+    }
+
+    if (matchedMatIdx !== -1) {
+      // Tìm thấy nguyên liệu -> Cập nhật Cột D (Nhập - idx 3) và Cột G (Note - idx 6)
+      var currImport = Number(matValues[matchedMatIdx][3]) || 0;
+      var newImport = currImport + parsed.qty;
+      matValues[matchedMatIdx][3] = newImport;
+
+      var currNote = String(matValues[matchedMatIdx][6] || "").trim();
+      if (shortDate) {
+        if (!currNote) {
+          currNote = shortDate;
+        } else if (!currNote.includes(shortDate)) {
+          currNote = currNote + ", " + shortDate;
+        }
+      }
+      matValues[matchedMatIdx][6] = currNote;
+    } else {
+      // Không khớp nguyên liệu -> Đưa vào BẢNG SINH HOẠT
+      var amountVal = Math.abs(Number(String(item.amount || "").replace(/[^\d]/g, "")) || 0);
+      var added = false;
+
+      // Kiểm tra xem đã có tên này trong bảng Sinh Hoạt chưa
+      for (var s = 0; s < sinhHoatValues.length; s++) {
+        var shName = removeAccents(sinhHoatValues[s][0]);
+        if (shName && (shName === normName || normName.includes(shName))) {
+          sinhHoatValues[s][1] = (Number(sinhHoatValues[s][1]) || 0) + parsed.qty;
+          if (amountVal > 0) sinhHoatValues[s][2] = amountVal;
+          if (shortDate && !String(sinhHoatValues[s][3]).includes(shortDate)) {
+            sinhHoatValues[s][3] = sinhHoatValues[s][3] ? (sinhHoatValues[s][3] + ", " + shortDate) : shortDate;
+          }
+          added = true;
+          break;
+        }
+      }
+
+      // Nếu chưa có, điền vào dòng trống đầu tiên trong BẢNG SINH HOẠT
+      if (!added) {
+        for (var s = 0; s < sinhHoatValues.length; s++) {
+          if (!sinhHoatValues[s][0]) { // Dòng trống
+            sinhHoatValues[s][0] = parsed.raw || parsed.name;
+            sinhHoatValues[s][1] = parsed.qty;
+            sinhHoatValues[s][2] = amountVal > 0 ? amountVal : "";
+            sinhHoatValues[s][3] = shortDate;
+            added = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Ghi ngược dữ liệu trở lại Google Sheet
+  matRange.setValues(matValues);
+  sinhHoatRange.setValues(sinhHoatValues);
+}
 
 function normalizeDateStr(val) {
   if (!val) return "";
@@ -29,7 +173,6 @@ function handleCashbook(ss, body) {
     sheet = ss.insertSheet(SHEET_CASHBOOK);
   }
 
-  // Clear & reset headers trên mỗi lần đồng bộ full
   sheet.clearContents();
   sheet.appendRow(headers);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#3c78d8").setFontColor("#ffffff");
@@ -55,7 +198,6 @@ function handleCashbook(ss, body) {
     var note = item.note || "";
     var rawAmount = item.amount || "";
     
-    // Đổi số tiền dạng chuỗi "- 80,000 đ" thành số để Sheet tự format
     var amountVal = rawAmount;
     if (typeof rawAmount === "string") {
       var isNegative = rawAmount.includes("-");
@@ -70,8 +212,14 @@ function handleCashbook(ss, body) {
 
   if (rows.length > 0) {
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
-    // Định dạng VND cho cột Số tiền (Cột 9 - I)
     sheet.getRange(2, 9, rows.length, 1).setNumberFormat("#,##0 \"đ\"");
+  }
+
+  // Tự động phân loại và điền vào Tab Tháng master (ví dụ: Tháng 9/2026)
+  try {
+    updateMasterMonthSheet(ss, items);
+  } catch (err) {
+    // Không để lỗi master sheet ảnh hưởng tới webhook response
   }
 
   return ContentService.createTextOutput(JSON.stringify({
@@ -92,12 +240,10 @@ function doPost(e) {
     var body = JSON.parse(e.postData.contents);
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    // Rẽ nhánh xử lý nếu target là "cashbook" (Sổ Quỹ Thu Chi)
     if (body.target === "cashbook") {
       return handleCashbook(ss, body);
     }
 
-    // Mặc định: Xử lý Báo cáo Doanh Thu Ca ("Doanh Thu Ca")
     var sheet = ss.getSheetByName(SHEET_REVENUE);
     if (!sheet) {
       sheet = ss.insertSheet(SHEET_REVENUE);
@@ -124,7 +270,6 @@ function doPost(e) {
       var dateStr = normalizeDateStr(item.date);
       var updatedAt = item.updatedAt || new Date().toLocaleString("vi-VN");
 
-      // Tìm dòng theo ngày trong trang tính hiện tại
       var targetRow = -1;
       for (var r = 1; r < data.length; r++) {
         var rowDate = normalizeDateStr(data[r][0]);
@@ -134,7 +279,6 @@ function doPost(e) {
         }
       }
 
-      // Trường hợp 1: Item là bản ghi tổng hợp theo ngày ({ date, ca1, ca2, ca3 })
       if (item.ca1 !== undefined || item.ca2 !== undefined || item.ca3 !== undefined) {
         var ca1 = (item.ca1 && Number(item.ca1) > 0) ? Number(item.ca1) : "";
         var ca2 = (item.ca2 && Number(item.ca2) > 0) ? Number(item.ca2) : "";
@@ -155,7 +299,6 @@ function doPost(e) {
           data[targetRow - 1][3] = ca3;
         }
       } else {
-        // Trường hợp 2: Item là từng Ca đơn lẻ ({ date, shift, netRevenue })
         var shiftName = String(item.shift || "Ca 1").trim();
         var revenue = Number(item.netRevenue) || 0;
         var colIdx = 1;
@@ -182,13 +325,11 @@ function doPost(e) {
       updatedCount++;
     }
 
-    // Tự động sắp xếp dữ liệu tăng dần theo Ngày
     var lastRow = sheet.getLastRow();
     if (lastRow > 2) {
       sheet.getRange(2, 1, lastRow - 1, 6).sort({ column: 1, ascending: true });
     }
 
-    // Định dạng VND cho các cột doanh thu B, C, D, E
     if (lastRow > 1) {
       sheet.getRange(2, 2, lastRow - 1, 4).setNumberFormat("#,##0 \"đ\"");
     }
@@ -208,5 +349,5 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  return HtmlService.createHtmlOutput("<h3>Webhook Đồng Bộ Doanh Thu POS & Thu Chi đang hoạt động bình thường!</h3>");
+  return HtmlService.createHtmlOutput("<h3>Webhook Đồng Bộ Doanh Thu POS & Thu Chi Master đang hoạt động bình thường!</h3>");
 }
