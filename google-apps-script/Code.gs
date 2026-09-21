@@ -15,20 +15,34 @@ function removeAccents(str) {
     .trim();
 }
 
+function stripUnits(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/\b(kg|gói|hộp|lon|bịch|chai|lít|quả|trái|cái|cuộn|bao|túi|dĩa|đĩa)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseNoteDetails(noteStr, rawAmount) {
   var str = String(noteStr || "").trim();
+  // Bỏ các comment chỉnh sửa dạng "[#edit]sửa lúc..."
+  str = str.replace(/\[#edit\].*/gi, "").trim();
+
   var qty = 1;
   var name = str;
 
-  // Pattern: "10 hộp sữa tươi", "20 rich lùn", "2kg xoài", "3 bịch trân châu"
-  var match = str.match(/^(\d+(?:[\.,]\d+)?)\s*(?:kg|gói|hộp|lon|bịch|chai|lít|quả|cái|cuộn)?\s*(.*)/i);
+  // Pattern nhận diện số lượng: "10 hộp sữa tươi", "20 rich lùn", "2kg cam", "2 lon cốt dừa"
+  var match = str.match(/^(\d+(?:[\.,]\d+)?)\s*(?:kg|gói|hộp|lon|bịch|chai|lít|quả|trái|cái|cuộn|bao|túi)?\s*(.*)/i);
   if (match && match[1] && match[2]) {
     qty = parseFloat(match[1].replace(',', '.'));
     name = match[2].trim();
   }
 
   if (!name) name = str;
-  return { qty: qty, name: name, raw: str };
+  var cleanName = stripUnits(name);
+  if (!cleanName) cleanName = name;
+
+  return { qty: qty, name: name, cleanName: cleanName, raw: str };
 }
 
 function extractShortDate(datetimeStr) {
@@ -50,7 +64,6 @@ function getActiveMonthSheet(ss) {
 
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
-    // Fallback: tìm sheet có dạng "Tháng X/YYYY" gần nhất
     var sheets = ss.getSheets();
     for (var i = 0; i < sheets.length; i++) {
       if (/^Tháng\s*\d{1,2}\/\d{4}/i.test(sheets[i].getName())) {
@@ -69,37 +82,66 @@ function updateMasterMonthSheet(ss, cashbookItems) {
   var matRange = monthSheet.getRange(38, 1, 42, 7); // Cols A (1) -> G (7)
   var matValues = matRange.getValues();
 
+  // Reset cột Nhập (col index 3) và cột Note (col index 6) trước khi tổng hợp lại từ đầu
+  for (var m = 0; m < matValues.length; m++) {
+    matValues[m][3] = "";
+    matValues[m][6] = "";
+  }
+
   // 2. Đọc BẢNG SINH HOẠT (Hàng 10 - 25, Cột E(5) -> H(8))
   var sinhHoatRange = monthSheet.getRange(10, 5, 16, 4);
   var sinhHoatValues = sinhHoatRange.getValues();
 
+  // Clear bảng sinh hoạt
+  for (var s = 0; s < sinhHoatValues.length; s++) {
+    sinhHoatValues[s][0] = "";
+    sinhHoatValues[s][1] = "";
+    sinhHoatValues[s][2] = "";
+    sinhHoatValues[s][3] = "";
+  }
+
   for (var i = 0; i < cashbookItems.length; i++) {
     var item = cashbookItems[i];
-    if (!item) continue;
+    if (!item || !item.note) continue;
 
     var parsed = parseNoteDetails(item.note, item.amount);
     var shortDate = extractShortDate(item.datetime);
-    var normName = removeAccents(parsed.name);
+    var normName = removeAccents(parsed.cleanName);
 
-    if (!normName) continue;
+    if (!normName || normName.length < 2) continue;
 
-    // Tìm kiếm trong BẢNG TỒN NGUYÊN VẬT LIỆU
+    // Tìm kiếm trong BẢNG TỒN NGUYÊN VẬT LIỆU (Strict Match)
     var matchedMatIdx = -1;
     for (var m = 0; m < matValues.length; m++) {
-      var matName = removeAccents(matValues[m][0]);
-      if (!matName) continue;
+      var rawMatName = matValues[m][0];
+      if (!rawMatName) continue;
 
-      if (normName.includes(matName) || matName.includes(normName)) {
+      var matName = removeAccents(rawMatName);
+      var matCleanName = removeAccents(stripUnits(rawMatName));
+
+      if (matName.length < 3) continue;
+
+      // Quy tắc khớp chính xác:
+      // 1. Trùng khớp hoàn toàn
+      // 2. normName chứa matCleanName (ví dụ "2 lon cot dua" chứa "cot dua")
+      // 3. matName chứa normName NHƯNG normName phải từ 5 ký tự trở lên (tránh từ ngắn như "lon", "kg")
+      if (normName === matName || normName === matCleanName) {
+        matchedMatIdx = m;
+        break;
+      } else if (normName.includes(matCleanName) || normName.includes(matName)) {
+        matchedMatIdx = m;
+        break;
+      } else if (matName.includes(normName) && normName.length >= 5) {
         matchedMatIdx = m;
         break;
       }
     }
 
     if (matchedMatIdx !== -1) {
-      // Tìm thấy nguyên liệu -> Cập nhật Cột D (Nhập - idx 3) và Cột G (Note - idx 6)
+      // Tìm thấy nguyên liệu -> Cập nhật Cột D (Nhập) và Cột G (Note)
       var currImport = Number(matValues[matchedMatIdx][3]) || 0;
       var newImport = currImport + parsed.qty;
-      matValues[matchedMatIdx][3] = newImport;
+      matValues[matchedMatIdx][3] = newImport > 0 ? newImport : "";
 
       var currNote = String(matValues[matchedMatIdx][6] || "").trim();
       if (shortDate) {
@@ -120,7 +162,7 @@ function updateMasterMonthSheet(ss, cashbookItems) {
         var shName = removeAccents(sinhHoatValues[s][0]);
         if (shName && (shName === normName || normName.includes(shName))) {
           sinhHoatValues[s][1] = (Number(sinhHoatValues[s][1]) || 0) + parsed.qty;
-          if (amountVal > 0) sinhHoatValues[s][2] = amountVal;
+          if (amountVal > 0) sinhHoatValues[s][2] = (Number(sinhHoatValues[s][2]) || 0) + amountVal;
           if (shortDate && !String(sinhHoatValues[s][3]).includes(shortDate)) {
             sinhHoatValues[s][3] = sinhHoatValues[s][3] ? (sinhHoatValues[s][3] + ", " + shortDate) : shortDate;
           }
@@ -215,11 +257,9 @@ function handleCashbook(ss, body) {
     sheet.getRange(2, 9, rows.length, 1).setNumberFormat("#,##0 \"đ\"");
   }
 
-  // Tự động phân loại và điền vào Tab Tháng master (ví dụ: Tháng 9/2026)
   try {
     updateMasterMonthSheet(ss, items);
   } catch (err) {
-    // Không để lỗi master sheet ảnh hưởng tới webhook response
   }
 
   return ContentService.createTextOutput(JSON.stringify({
