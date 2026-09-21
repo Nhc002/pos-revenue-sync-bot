@@ -1,0 +1,65 @@
+name: Đồng bộ doanh thu POS tự động
+
+on:
+  # Chạy tự động mỗi 30 phút
+  schedule:
+    - cron: '*/30 * * * *'
+  # Cho phép chạy thủ công từ GitHub UI
+  workflow_dispatch:
+
+jobs:
+  sync-revenue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxkbcommon0 \
+            libgbm1 \
+            libgtk-3-0 \
+            libasound2t64 \
+            libxshmfence1
+
+      - name: Create .env file from secrets
+        run: |
+          cat > .env << 'ENVEOF'
+          GAS_WEBHOOK_URL=${{ secrets.GAS_WEBHOOK_URL }}
+          POS_LOGIN_URL=https://fabi.ipos.vn/login
+          POS_USERNAME=${{ secrets.POS_USERNAME }}
+          POS_PASSWORD=${{ secrets.POS_PASSWORD }}
+          POS_REPORT_URL=https://fabi.ipos.vn/report/revenue/revenue/shift
+          HEADLESS=true
+          CRON_SCHEDULE=0,30 * * * *
+          POS_SELECTOR_USERNAME_INPUT=input[name="email_input"], input[name="username"], #username
+          POS_SELECTOR_PASSWORD_INPUT=input[type="password"], input[name="password"], #password
+          POS_SELECTOR_LOGIN_BTN=button[type="submit"], .btn-primary, .btn-login
+          POS_SELECTOR_REPORT_TABLE=table
+          POS_SELECTOR_ROW=table tbody tr
+          POS_SELECTOR_OPEN_TIME=td:nth-child(12), .td-open-time, .open-time
+          POS_SELECTOR_CLOSE_TIME=td:nth-child(13), .td-close-time, .close-time
+          POS_SELECTOR_NET_REVENUE=td:nth-child(6), .td-net-revenue, .net-revenue
+          POS_SELECTOR_SHIFT_NAME=td:nth-child(2), .td-shift-name, .shift-name
+          ENVEOF
+
+      - name: Run sync bot
+        run: node index.js --once
+        env:
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable

@@ -1,0 +1,32 @@
+{
+  "name": "pos-revenue-sync-bot",
+  "version": "1.0.0",
+  "description": "Hệ thống bot tự động cào dữ liệu báo cáo doanh thu POS và đồng bộ sang Google Sheets qua Google Apps Script Webhook",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "once": "node index.js --once",
+    "setup": "node setup.js",
+    "setup:task": "node scripts/setup-windows-task.js",
+    "test:parser": "node test/test-parser.js",
+    "test:mock": "node test/test-mock-run.js",
+    "test:historical": "node test/test-send-historical-data.js"
+  },
+  "keywords": [
+    "puppeteer",
+    "pos",
+    "google-apps-script",
+    "automation",
+    "web-scraping"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3",
+    "puppeteer": "^24.3.0",
+    "winston": "^3.17.0"
+  }
+}
