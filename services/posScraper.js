@@ -79,7 +79,7 @@ async function selectThisMonthFilter(page) {
  * Cào dữ liệu Báo Cáo Thu Chi (Cashbook) từ trang đang mở
  */
 async function scrapeCashbookInternal(page, activeConfig) {
-  const cashbookUrl = activeConfig.cashbookReportUrl || 'https://fabi.ipos.vn/report/cashbook';
+  const cashbookUrl = activeConfig.cashbookReportUrl || 'https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out';
   logger.info(`[Puppeteer] Điều hướng đến trang Báo Cáo Thu Chi: ${cashbookUrl}`);
   
   await page.goto(cashbookUrl, { waitUntil: 'networkidle2', timeout: 30000 }).catch(err => {

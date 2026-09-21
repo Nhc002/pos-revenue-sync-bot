@@ -46,7 +46,7 @@ jobs:
           POS_USERNAME=${{ secrets.POS_USERNAME }}
           POS_PASSWORD=${{ secrets.POS_PASSWORD }}
           POS_REPORT_URL=https://fabi.ipos.vn/report/revenue/revenue/shift
-          POS_CASHBOOK_REPORT_URL=https://fabi.ipos.vn/report/cashbook
+          POS_CASHBOOK_REPORT_URL=https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out
           HEADLESS=true
           CRON_SCHEDULE=0,30 * * * *
           POS_SELECTOR_USERNAME_INPUT=input[name="email_input"], input[name="username"], #username
