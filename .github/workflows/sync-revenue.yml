@@ -62,5 +62,4 @@ jobs:
 
       - name: Run sync bot
         run: node index.js --once
-        env:
-          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable
+

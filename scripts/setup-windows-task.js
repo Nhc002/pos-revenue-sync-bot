@@ -26,9 +26,9 @@ function registerWindowsTask() {
       // Bỏ qua nếu task chưa từng tồn tại
     }
 
-    // Tạo tác vụ mới chạy định kỳ 30 phút một lần
-    // Command: schtasks /Create /TN "POSRevenueSyncBot" /TR "\"C:\Program Files\nodejs\node.exe\" \"c:\path\to\index.js\" --once" /SC MINUTE /MO 30 /F
-    const command = `schtasks /Create /TN "${TASK_NAME}" /TR "\\"${nodePath}\\" \\"${scriptPath}\\" --once" /SC MINUTE /MO 30 /F`;
+    // Tạo tác vụ mới bằng PowerShell với WorkingDirectory được thiết lập chuẩn xác
+    const psScript = `$action = New-ScheduledTaskAction -Execute '${nodePath}' -Argument '\"${scriptPath}\" --once' -WorkingDirectory '${projectDir}'; $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30); Register-ScheduledTask -TaskName '${TASK_NAME}' -Action $action -Trigger $trigger -Force;`;
+    const command = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psScript.replace(/"/g, '\\"')}"`;
 
     console.log(`[TaskInstaller] Đang chạy lệnh khởi tạo Windows Task Scheduler...`);
     execSync(command, { encoding: 'utf-8' });
