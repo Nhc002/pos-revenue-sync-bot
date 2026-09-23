@@ -65,12 +65,59 @@ if (isOnce) {
   logger.info(`[App] Khởi chạy ở chế độ LẬP LỊCH TỰ ĐỘNG (Cron: "${schedule}")...`);
   logger.info('[App] Bot đang chạy ẩn ngầm. Nhấn Ctrl+C để dừng.');
 
+  let lastRunTime = null;
+  let isRunning = false;
+
+  async function safeExecute() {
+    if (isRunning) {
+      logger.warn('[App] Tiến trình đồng bộ trước đó vẫn đang chạy, bỏ qua lượt này.');
+      return;
+    }
+    isRunning = true;
+    try {
+      await executeSyncTask();
+      lastRunTime = new Date().toISOString();
+    } finally {
+      isRunning = false;
+    }
+  }
+
+  // Khởi động HTTP Health Server phục vụ Cloud PaaS (Render, Railway, Koyeb)
+  const http = require('http');
+  const PORT = process.env.PORT || 3000;
+
+  const server = http.createServer(async (req, res) => {
+    const url = req.url || '/';
+
+    if (url === '/sync') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ message: 'Đã nhận lệnh kích hoạt đồng bộ!', timestamp: new Date().toISOString() }));
+      safeExecute();
+      return;
+    }
+
+    // Endpoint Health Check mặc định
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      status: 'online',
+      service: 'POS Revenue Sync Bot',
+      lastRun: lastRunTime || 'Chưa chạy lần nào',
+      isRunning: isRunning,
+      cronSchedule: schedule,
+      currentTime: new Date().toISOString()
+    }, null, 2));
+  });
+
+  server.listen(PORT, () => {
+    logger.info(`[CloudServer] Đã mở cổng HTTP Health-Check tại port ${PORT}`);
+  });
+
   // Chạy ngay lần đầu tiên khởi động
-  executeSyncTask();
+  safeExecute();
 
   // Lập lịch định kỳ
   cron.schedule(schedule, () => {
     logger.info(`[CronJob] Đã đến lịch chạy tự động (${new Date().toLocaleString('vi-VN')})...`);
-    executeSyncTask();
+    safeExecute();
   });
 }

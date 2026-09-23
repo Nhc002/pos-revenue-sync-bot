@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: pos-revenue-sync-bot
+    env: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HEADLESS
+        value: "true"
+      - key: CRON_SCHEDULE
+        value: "0,30 * * * *"
+      - key: POS_LOGIN_URL
+        value: "https://fabi.ipos.vn/login"
+      - key: POS_REPORT_URL
+        value: "https://fabi.ipos.vn/report/revenue/revenue/shift"
+      - key: POS_CASHBOOK_REPORT_URL
+        value: "https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out"
+      - key: GAS_WEBHOOK_URL
+        sync: false
+      - key: POS_USERNAME
+        sync: false
+      - key: POS_PASSWORD
+        sync: false
