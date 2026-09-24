@@ -9,18 +9,16 @@ WORKDIR /app
 # Copy file định nghĩa gói
 COPY package*.json ./
 
-# Cài đặt thư viện (bỏ qua download Chromium vì image đã có sẵn)
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-
-
-RUN npm ci --only=production
+# Cài đặt thư viện và đảm bảo chrome browser được tải về đầy đủ
+RUN npm ci --only=production && npx puppeteer browsers install chrome
 
 # Copy toàn bộ mã nguồn
 COPY . .
 
 # Chuyển quyền lại cho user pptruser an toàn
-RUN chown -R pptruser:pptruser /app
+RUN chown -R pptruser:pptruser /app /home/pptruser/.cache
 USER pptruser
+
 
 # Expose port cho Render / Cloud PaaS health-check
 EXPOSE 3000
