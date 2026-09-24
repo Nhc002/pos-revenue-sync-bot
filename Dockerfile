@@ -11,7 +11,7 @@ COPY package*.json ./
 
 # Cài đặt thư viện (bỏ qua download Chromium vì image đã có sẵn)
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
 
 RUN npm ci --only=production
 
