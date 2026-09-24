@@ -9,15 +9,18 @@ WORKDIR /app
 # Copy file định nghĩa gói
 COPY package*.json ./
 
-# Cài đặt thư viện và đảm bảo chrome browser được tải về đầy đủ
+ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer
+
+# Cài đặt thư viện và đảm bảo chrome browser được tải về đúng thư mục cache của pptruser
 RUN npm ci --only=production && npx puppeteer browsers install chrome
 
 # Copy toàn bộ mã nguồn
 COPY . .
 
 # Chuyển quyền lại cho user pptruser an toàn
-RUN chown -R pptruser:pptruser /app /home/pptruser/.cache
+RUN chown -R pptruser:pptruser /app /home/pptruser
 USER pptruser
+
 
 
 # Expose port cho Render / Cloud PaaS health-check
