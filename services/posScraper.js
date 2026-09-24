@@ -82,12 +82,12 @@ async function scrapeCashbookInternal(page, activeConfig) {
   const cashbookUrl = activeConfig.cashbookReportUrl || 'https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out';
   logger.info(`[Puppeteer] Điều hướng đến trang Báo Cáo Thu Chi: ${cashbookUrl}`);
   
-  await page.goto(cashbookUrl, { waitUntil: 'networkidle2', timeout: 30000 }).catch(err => {
+  await page.goto(cashbookUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
     logger.warn(`[Puppeteer] Điều hướng Thu Chi gặp cảnh báo: ${err.message}`);
   });
 
   const reportTableSelector = cleanSelector(activeConfig.selectors.reportTable) || 'table';
-  await page.waitForSelector(reportTableSelector, { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector(reportTableSelector, { timeout: 30000 }).catch(() => {});
 
   await selectThisMonthFilter(page);
 
@@ -177,10 +177,13 @@ async function scrapeCashbookInternal(page, activeConfig) {
 async function scrapeShiftInternal(page, activeConfig) {
   const reportUrl = activeConfig.reportUrl || activeConfig.loginUrl;
   logger.info(`[Puppeteer] Điều hướng đến trang báo cáo doanh thu: ${reportUrl}`);
-  await page.goto(reportUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+  await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
+    logger.warn(`[Puppeteer] Điều hướng báo cáo doanh thu gặp cảnh báo: ${err.message}`);
+  });
 
   const reportTableSelector = cleanSelector(activeConfig.selectors.reportTable) || 'table';
-  await page.waitForSelector(reportTableSelector, { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector(reportTableSelector, { timeout: 30000 }).catch(() => {});
+
 
   await selectThisMonthFilter(page);
 
@@ -310,7 +313,9 @@ async function scrapeAllPOSData(customConfig = {}) {
     // 1. Đăng nhập POS
     if (activeConfig.loginUrl) {
       logger.info(`[Puppeteer] Điều hướng đến trang đăng nhập: ${activeConfig.loginUrl}`);
-      await page.goto(activeConfig.loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      await page.goto(activeConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
+        logger.warn(`[Puppeteer] Điều hướng đăng nhập gặp cảnh báo: ${err.message}`);
+      });
 
       const userInputMatch = await findElementSafely(page, activeConfig.selectors.usernameInput);
       const passInputMatch = await findElementSafely(page, activeConfig.selectors.passwordInput);
@@ -327,9 +332,10 @@ async function scrapeAllPOSData(customConfig = {}) {
         if (btnMatch) {
           logger.info(`[Puppeteer] Bấm nút đăng nhập...`);
           await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
             page.click(btnMatch.selector)
           ]);
+          await new Promise(r => setTimeout(r, 2000));
           logger.info('[Puppeteer] Đăng nhập thành công!');
         }
       }
