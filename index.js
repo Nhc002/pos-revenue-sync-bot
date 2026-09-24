@@ -90,8 +90,8 @@ if (isOnce) {
     const url = req.url || '/';
 
     if (url === '/sync') {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ message: 'Đã nhận lệnh kích hoạt đồng bộ!', timestamp: new Date().toISOString() }));
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('OK');
       safeExecute();
       return;
     }
