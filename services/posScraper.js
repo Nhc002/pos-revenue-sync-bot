@@ -284,8 +284,7 @@ async function scrapeAllPOSData(customConfig = {}) {
 
   const isHeadless = customConfig.headless !== undefined ? customConfig.headless : config.bot.headless;
 
-  logger.info(`[Puppeteer] Đang khởi tạo trình duyệt (Headless: ${isHeadless})...`);
-  const browser = await puppeteer.launch({
+  const launchOptions = {
     headless: isHeadless,
     args: [
       '--no-sandbox',
@@ -294,7 +293,14 @@ async function scrapeAllPOSData(customConfig = {}) {
       '--disable-accelerated-2d-canvas',
       '--disable-gpu'
     ]
-  });
+  };
+
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  const browser = await puppeteer.launch(launchOptions);
+
 
   try {
     const page = await browser.newPage();

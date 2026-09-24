@@ -45,8 +45,19 @@ async function executeSyncTask() {
     logger.info('===========================================================');
     logger.info('✅ [MainTask] Hoàn tất toàn bộ tiến trình đồng bộ!');
     logger.info('===========================================================');
+    return {
+      success: true,
+      shiftCount: (shiftData && shiftData.length) || 0,
+      cashbookCount: (cashbookData && cashbookData.length) || 0,
+      completedAt: new Date().toISOString()
+    };
   } catch (error) {
     logger.error(`❌ [MainTask] Tiến trình tự động đồng bộ gặp lỗi: ${error.message}`);
+    return {
+      success: false,
+      error: error.message,
+      failedAt: new Date().toISOString()
+    };
   }
 }
 
@@ -66,6 +77,7 @@ if (isOnce) {
   logger.info('[App] Bot đang chạy ẩn ngầm. Nhấn Ctrl+C để dừng.');
 
   let lastRunTime = null;
+  let lastSyncResult = null;
   let isRunning = false;
 
   async function safeExecute() {
@@ -75,8 +87,10 @@ if (isOnce) {
     }
     isRunning = true;
     try {
-      await executeSyncTask();
+      lastSyncResult = await executeSyncTask();
       lastRunTime = new Date().toISOString();
+    } catch (err) {
+      lastSyncResult = { success: false, error: err.message, failedAt: new Date().toISOString() };
     } finally {
       isRunning = false;
     }
@@ -96,6 +110,13 @@ if (isOnce) {
       return;
     }
 
+    if (url === '/logs') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      const logs = logger.getMemoryLogs ? logger.getMemoryLogs() : [];
+      res.end(logs.join('\n') || 'Chưa có nhật ký hoạt động nào.');
+      return;
+    }
+
     // Endpoint Health Check mặc định
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
@@ -103,8 +124,16 @@ if (isOnce) {
       service: 'POS Revenue Sync Bot',
       lastRun: lastRunTime || 'Chưa chạy lần nào',
       isRunning: isRunning,
+      lastSyncResult: lastSyncResult || 'Chưa có kết quả',
+      configCheck: {
+        hasGasWebhook: !!config.gasWebhookUrl,
+        hasPosUser: !!config.pos.username,
+        hasPosPass: !!config.pos.password,
+        posUsername: config.pos.username ? (config.pos.username.substring(0, 3) + '***') : 'CHƯA CẤU HÌNH'
+      },
       cronSchedule: schedule,
-      currentTime: new Date().toISOString()
+      currentTime: new Date().toISOString(),
+      logsEndpoint: '/logs'
     }, null, 2));
   });
 
