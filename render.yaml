@@ -19,6 +19,11 @@ services:
         value: "https://fabi.ipos.vn/report/revenue/revenue/shift"
       - key: POS_CASHBOOK_REPORT_URL
         value: "https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out"
+      - key: RENDER_EXTERNAL_URL
+        fromService:
+          type: web
+          name: pos-revenue-sync-bot
+          property: host
       - key: GAS_WEBHOOK_URL
         sync: false
       - key: POS_USERNAME

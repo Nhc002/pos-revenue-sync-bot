@@ -82,12 +82,14 @@ async function scrapeCashbookInternal(page, activeConfig) {
   const cashbookUrl = activeConfig.cashbookReportUrl || 'https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out';
   logger.info(`[Puppeteer] Điều hướng đến trang Báo Cáo Thu Chi: ${cashbookUrl}`);
   
-  await page.goto(cashbookUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
+  await page.goto(cashbookUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(err => {
     logger.warn(`[Puppeteer] Điều hướng Thu Chi gặp cảnh báo: ${err.message}`);
   });
 
   const reportTableSelector = cleanSelector(activeConfig.selectors.reportTable) || 'table';
   await page.waitForSelector(reportTableSelector, { timeout: 30000 }).catch(() => {});
+  // Chờ thêm để SPA render bảng dữ liệu
+  await new Promise(r => setTimeout(r, 2000));
 
   await selectThisMonthFilter(page);
 
@@ -177,13 +179,14 @@ async function scrapeCashbookInternal(page, activeConfig) {
 async function scrapeShiftInternal(page, activeConfig) {
   const reportUrl = activeConfig.reportUrl || activeConfig.loginUrl;
   logger.info(`[Puppeteer] Điều hướng đến trang báo cáo doanh thu: ${reportUrl}`);
-  await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
+  await page.goto(reportUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(err => {
     logger.warn(`[Puppeteer] Điều hướng báo cáo doanh thu gặp cảnh báo: ${err.message}`);
   });
 
   const reportTableSelector = cleanSelector(activeConfig.selectors.reportTable) || 'table';
   await page.waitForSelector(reportTableSelector, { timeout: 30000 }).catch(() => {});
-
+  // Chờ thêm để SPA render bảng dữ liệu
+  await new Promise(r => setTimeout(r, 2000));
 
   await selectThisMonthFilter(page);
 
@@ -313,9 +316,28 @@ async function scrapeAllPOSData(customConfig = {}) {
     // 1. Đăng nhập POS
     if (activeConfig.loginUrl) {
       logger.info(`[Puppeteer] Điều hướng đến trang đăng nhập: ${activeConfig.loginUrl}`);
-      await page.goto(activeConfig.loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(err => {
+      await page.goto(activeConfig.loginUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(err => {
         logger.warn(`[Puppeteer] Điều hướng đăng nhập gặp cảnh báo: ${err.message}`);
       });
+
+      // Chờ form login render xong (iPOS là SPA, cần chờ JS render)
+      const usernameSelectors = cleanSelector(activeConfig.selectors.usernameInput).split(',').map(s => s.trim()).filter(Boolean);
+      let formReady = false;
+      for (const sel of usernameSelectors) {
+        try {
+          await page.waitForSelector(sel, { visible: true, timeout: 15000 });
+          formReady = true;
+          logger.info(`[Puppeteer] Form đăng nhập đã sẵn sàng (tìm thấy: ${sel})`);
+          break;
+        } catch (e) {
+          // thử selector tiếp theo
+        }
+      }
+
+      if (!formReady) {
+        logger.warn('[Puppeteer] ⚠️ Không tìm thấy form đăng nhập sau 15 giây! Chụp ảnh debug...');
+        await page.screenshot({ path: path.join(__dirname, '..', 'logs', 'login-form-not-found.png'), fullPage: true });
+      }
 
       const userInputMatch = await findElementSafely(page, activeConfig.selectors.usernameInput);
       const passInputMatch = await findElementSafely(page, activeConfig.selectors.passwordInput);
@@ -332,12 +354,16 @@ async function scrapeAllPOSData(customConfig = {}) {
         if (btnMatch) {
           logger.info(`[Puppeteer] Bấm nút đăng nhập...`);
           await Promise.all([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
             page.click(btnMatch.selector)
           ]);
           await new Promise(r => setTimeout(r, 2000));
           logger.info('[Puppeteer] Đăng nhập thành công!');
+        } else {
+          logger.warn('[Puppeteer] ⚠️ Không tìm thấy nút đăng nhập!');
         }
+      } else {
+        logger.warn(`[Puppeteer] ⚠️ Không tìm thấy ô nhập username! (userInput=${!!userInputMatch}, username=${!!activeConfig.username})`);
       }
     }
 

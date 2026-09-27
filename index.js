@@ -149,4 +149,24 @@ if (isOnce) {
     logger.info(`[CronJob] Đã đến lịch chạy tự động (${new Date().toLocaleString('vi-VN')})...`);
     safeExecute();
   });
+
+  // Self-ping giữ cho Render Free Tier không bị ngủ (ping mỗi 14 phút)
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
+  if (RENDER_URL) {
+    const https = require('https');
+    const http2 = require('http');
+    const pingInterval = 14 * 60 * 1000; // 14 phút
+
+    setInterval(() => {
+      const pingUrl = `${RENDER_URL}/`;
+      const client = pingUrl.startsWith('https') ? https : http2;
+      client.get(pingUrl, (res) => {
+        logger.info(`[SelfPing] Ping ${pingUrl} → HTTP ${res.statusCode} (giữ service alive)`);
+      }).on('error', (err) => {
+        logger.warn(`[SelfPing] Ping thất bại: ${err.message}`);
+      });
+    }, pingInterval);
+
+    logger.info(`[SelfPing] Đã kích hoạt self-ping mỗi 14 phút tới ${RENDER_URL}`);
+  }
 }
