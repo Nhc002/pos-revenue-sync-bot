@@ -40,10 +40,11 @@ async function findElementSafely(page, selectorStr) {
 }
 
 /**
- * Chọn bộ lọc "Tháng này" trên trang báo cáo iPOS
+ * Chọn bộ lọc ngày theo tên preset trên trang báo cáo iPOS
+ * @param {string} presetName - Tên preset: 'Tháng này', 'Tháng trước', '30 ngày qua', v.v.
  */
-async function selectThisMonthFilter(page) {
-  logger.info('[Puppeteer] Đang kích hoạt bộ lọc "Tháng này" trên giao diện iPOS...');
+async function selectDatePreset(page, presetName = 'Tháng này') {
+  logger.info(`[Puppeteer] Đang kích hoạt bộ lọc "${presetName}" trên giao diện iPOS...`);
   
   await page.evaluate(() => {
     const allEls = Array.from(document.querySelectorAll('div, span, button, input, a'));
@@ -56,29 +57,31 @@ async function selectThisMonthFilter(page) {
 
   await new Promise(r => setTimeout(r, 1200));
 
-  const selectedRange = await page.evaluate(() => {
+  const selectedRange = await page.evaluate((targetPreset) => {
     const els = Array.from(document.querySelectorAll('li, div, button, span, a'));
     const target = els.find(el => {
       const text = el.innerText ? el.innerText.trim() : '';
-      return text === 'Tháng này' || text === '30 ngày qua';
+      return text === targetPreset;
     });
     if (target) {
       target.click();
       return target.innerText;
     }
     return null;
-  });
+  }, presetName);
 
   if (selectedRange) {
-    logger.info(`[Puppeteer] Đã chọn tùy chọn: "${selectedRange}". Chờ bảng nạp lại dữ liệu cả tháng...`);
+    logger.info(`[Puppeteer] Đã chọn tùy chọn: "${selectedRange}". Chờ bảng nạp lại dữ liệu...`);
     await new Promise(r => setTimeout(r, 3000));
+  } else {
+    logger.warn(`[Puppeteer] Không tìm thấy tùy chọn "${presetName}"`);
   }
 }
 
 /**
  * Cào dữ liệu Báo Cáo Thu Chi (Cashbook) từ trang đang mở
  */
-async function scrapeCashbookInternal(page, activeConfig) {
+async function scrapeCashbookInternal(page, activeConfig, preset = 'Tháng này') {
   const cashbookUrl = activeConfig.cashbookReportUrl || 'https://fabi.ipos.vn/report/accounting/revenue/cash-in-cash-out';
   logger.info(`[Puppeteer] Điều hướng đến trang Báo Cáo Thu Chi: ${cashbookUrl}`);
   
@@ -91,7 +94,7 @@ async function scrapeCashbookInternal(page, activeConfig) {
   // Chờ thêm để SPA render bảng dữ liệu
   await new Promise(r => setTimeout(r, 2000));
 
-  await selectThisMonthFilter(page);
+  await selectDatePreset(page, preset);
 
   const allCashbookRows = [];
   const maxPages = 15;
@@ -176,7 +179,7 @@ async function scrapeCashbookInternal(page, activeConfig) {
 /**
  * Cào dữ liệu Báo Cáo Doanh Thu Ca từ trang đang mở
  */
-async function scrapeShiftInternal(page, activeConfig) {
+async function scrapeShiftInternal(page, activeConfig, preset = 'Tháng này') {
   const reportUrl = activeConfig.reportUrl || activeConfig.loginUrl;
   logger.info(`[Puppeteer] Điều hướng đến trang báo cáo doanh thu: ${reportUrl}`);
   await page.goto(reportUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(err => {
@@ -188,7 +191,7 @@ async function scrapeShiftInternal(page, activeConfig) {
   // Chờ thêm để SPA render bảng dữ liệu
   await new Promise(r => setTimeout(r, 2000));
 
-  await selectThisMonthFilter(page);
+  await selectDatePreset(page, preset);
 
   const allRawRows = [];
   const maxPages = 15;
@@ -400,12 +403,28 @@ async function scrapeAllPOSData(customConfig = {}) {
     }
 
     // 2. Cào báo cáo doanh thu ca
-    const shiftData = await scrapeShiftInternal(page, activeConfig);
+    let shiftData;
+    if (activeConfig.historical) {
+      logger.info('[Puppeteer] 📅 Chế độ LỊCH SỬ: Cào dữ liệu Tháng trước + Tháng này...');
+      const prevMonth = await scrapeShiftInternal(page, activeConfig, 'Tháng trước');
+      const thisMonth = await scrapeShiftInternal(page, activeConfig, 'Tháng này');
+      shiftData = [...prevMonth, ...thisMonth];
+      logger.info(`[Puppeteer] Tổng hợp doanh thu lịch sử: ${shiftData.length} ca (Tháng trước: ${prevMonth.length}, Tháng này: ${thisMonth.length})`);
+    } else {
+      shiftData = await scrapeShiftInternal(page, activeConfig);
+    }
 
     // 3. Cào báo cáo sổ quỹ thu chi
     let cashbookData = [];
     try {
-      cashbookData = await scrapeCashbookInternal(page, activeConfig);
+      if (activeConfig.historical) {
+        const prevCB = await scrapeCashbookInternal(page, activeConfig, 'Tháng trước');
+        const thisCB = await scrapeCashbookInternal(page, activeConfig, 'Tháng này');
+        cashbookData = [...prevCB, ...thisCB];
+        logger.info(`[Puppeteer] Tổng hợp Thu Chi lịch sử: ${cashbookData.length} bản ghi (Tháng trước: ${prevCB.length}, Tháng này: ${thisCB.length})`);
+      } else {
+        cashbookData = await scrapeCashbookInternal(page, activeConfig);
+      }
     } catch (err) {
       logger.error(`[Puppeteer] Lỗi khi cào dữ liệu Thu Chi: ${err.message}`);
     }

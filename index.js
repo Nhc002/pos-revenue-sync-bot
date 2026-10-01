@@ -7,14 +7,14 @@ const { syncToGoogleSheets, syncCashbookToGoogleSheets } = require('./services/s
 /**
  * Thực thi quy trình cào dữ liệu và đồng bộ doanh thu ca & thu chi
  */
-async function executeSyncTask() {
+async function executeSyncTask(options = {}) {
   logger.info('===========================================================');
   logger.info('=== BẮT ĐẦU TIẾN TRÌNH TỰ ĐỘNG ĐỒNG BỘ POS (DOANH THU & THU CHI) ===');
   logger.info('===========================================================');
 
   try {
     // 1. Trích xuất dữ liệu đóng ca & thu chi từ POS trong 1 phiên đăng nhập
-    const { shiftData, cashbookData } = await scrapeAllPOSData();
+    const { shiftData, cashbookData } = await scrapeAllPOSData(options.historical ? { historical: true } : {});
 
     // 2. Đồng bộ báo cáo doanh thu ca
     if (shiftData && shiftData.length > 0) {
@@ -80,14 +80,14 @@ if (isOnce) {
   let lastSyncResult = null;
   let isRunning = false;
 
-  async function safeExecute() {
+  async function safeExecute(options = {}) {
     if (isRunning) {
       logger.warn('[App] Tiến trình đồng bộ trước đó vẫn đang chạy, bỏ qua lượt này.');
       return;
     }
     isRunning = true;
     try {
-      lastSyncResult = await executeSyncTask();
+      lastSyncResult = await executeSyncTask(options);
       lastRunTime = new Date().toISOString();
     } catch (err) {
       lastSyncResult = { success: false, error: err.message, failedAt: new Date().toISOString() };
@@ -103,10 +103,12 @@ if (isOnce) {
   const server = http.createServer(async (req, res) => {
     const url = req.url || '/';
 
-    if (url === '/sync') {
+    if (url === '/sync' || url.startsWith('/sync?')) {
+      const urlObj = new URL(url, 'http://localhost');
+      const historical = urlObj.searchParams.get('historical') === 'true';
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('OK');
-      safeExecute();
+      safeExecute({ historical });
       return;
     }
 
