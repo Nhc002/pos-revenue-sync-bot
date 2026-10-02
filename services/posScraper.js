@@ -302,7 +302,6 @@ async function scrapeAllPOSData(customConfig = {}) {
       '--disable-accelerated-2d-canvas',
       '--disable-gpu',
       // Tối ưu bộ nhớ cho Render Free Tier (512MB RAM)
-      '--single-process',
       '--no-zygote',
       '--disable-extensions',
       '--disable-background-networking',
@@ -331,9 +330,8 @@ async function scrapeAllPOSData(customConfig = {}) {
 
   const browser = await puppeteer.launch(launchOptions);
 
-
   try {
-    const page = await browser.newPage();
+    let page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1280, height: 720 });
 
@@ -348,57 +346,113 @@ async function scrapeAllPOSData(customConfig = {}) {
       }
     });
 
-    // 1. Đăng nhập POS
+    // 1. Đăng nhập POS (có retry nếu bị frame detached)
     if (activeConfig.loginUrl) {
-      logger.info(`[Puppeteer] Điều hướng đến trang đăng nhập: ${activeConfig.loginUrl}`);
-      await page.goto(activeConfig.loginUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(err => {
-        logger.warn(`[Puppeteer] Điều hướng đăng nhập gặp cảnh báo: ${err.message}`);
-      });
+      const MAX_LOGIN_RETRIES = 3;
+      let loginSuccess = false;
 
-      // Chờ form login render xong (iPOS là SPA, cần chờ JS render)
-      const usernameSelectors = cleanSelector(activeConfig.selectors.usernameInput).split(',').map(s => s.trim()).filter(Boolean);
-      let formReady = false;
-      for (const sel of usernameSelectors) {
+      for (let attempt = 1; attempt <= MAX_LOGIN_RETRIES; attempt++) {
         try {
-          await page.waitForSelector(sel, { visible: true, timeout: 15000 });
-          formReady = true;
-          logger.info(`[Puppeteer] Form đăng nhập đã sẵn sàng (tìm thấy: ${sel})`);
-          break;
-        } catch (e) {
-          // thử selector tiếp theo
+          logger.info(`[Puppeteer] Điều hướng đến trang đăng nhập (lần ${attempt}/${MAX_LOGIN_RETRIES}): ${activeConfig.loginUrl}`);
+          
+          // Dùng 'domcontentloaded' thay vì 'networkidle2' vì iPOS SPA
+          // có thể detach frame khi redirect → gây crash nếu chờ networkidle2
+          await page.goto(activeConfig.loginUrl, { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 60000 
+          });
+
+          // Chờ thêm để SPA render xong sau khi DOM loaded
+          await new Promise(r => setTimeout(r, 3000));
+
+          // Chờ form login render xong (iPOS là SPA, cần chờ JS render)
+          const usernameSelectors = cleanSelector(activeConfig.selectors.usernameInput).split(',').map(s => s.trim()).filter(Boolean);
+          let formReady = false;
+          for (const sel of usernameSelectors) {
+            try {
+              await page.waitForSelector(sel, { visible: true, timeout: 15000 });
+              formReady = true;
+              logger.info(`[Puppeteer] Form đăng nhập đã sẵn sàng (tìm thấy: ${sel})`);
+              break;
+            } catch (e) {
+              // thử selector tiếp theo
+            }
+          }
+
+          if (!formReady) {
+            logger.warn('[Puppeteer] ⚠️ Không tìm thấy form đăng nhập sau 15 giây! Chụp ảnh debug...');
+            try {
+              await page.screenshot({ path: path.join(__dirname, '..', 'logs', 'login-form-not-found.png'), fullPage: true });
+            } catch (screenshotErr) {
+              logger.warn(`[Puppeteer] Không thể chụp ảnh debug: ${screenshotErr.message}`);
+            }
+            
+            if (attempt < MAX_LOGIN_RETRIES) {
+              logger.info(`[Puppeteer] Thử lại sau 5 giây...`);
+              await new Promise(r => setTimeout(r, 5000));
+              continue; // Thử lại lần tiếp
+            }
+            break; // Hết retry
+          }
+
+          const userInputMatch = await findElementSafely(page, activeConfig.selectors.usernameInput);
+          const passInputMatch = await findElementSafely(page, activeConfig.selectors.passwordInput);
+
+          if (userInputMatch && activeConfig.username) {
+            logger.info(`[Puppeteer] Tự động nhập tài khoản "${activeConfig.username}"...`);
+            await page.type(userInputMatch.selector, activeConfig.username, { delay: 30 });
+            
+            if (passInputMatch && activeConfig.password) {
+              await page.type(passInputMatch.selector, activeConfig.password, { delay: 30 });
+            }
+
+            const btnMatch = await findElementSafely(page, activeConfig.selectors.loginBtn);
+            if (btnMatch) {
+              logger.info(`[Puppeteer] Bấm nút đăng nhập...`);
+              await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
+                page.click(btnMatch.selector)
+              ]);
+              await new Promise(r => setTimeout(r, 2000));
+              logger.info('[Puppeteer] Đăng nhập thành công!');
+              loginSuccess = true;
+            } else {
+              logger.warn('[Puppeteer] ⚠️ Không tìm thấy nút đăng nhập!');
+            }
+          } else {
+            logger.warn(`[Puppeteer] ⚠️ Không tìm thấy ô nhập username! (userInput=${!!userInputMatch}, username=${!!activeConfig.username})`);
+          }
+
+          break; // Thoát vòng retry nếu không có lỗi nghiêm trọng
+
+        } catch (navError) {
+          logger.warn(`[Puppeteer] Lỗi điều hướng lần ${attempt}: ${navError.message}`);
+          if (attempt < MAX_LOGIN_RETRIES) {
+            logger.info(`[Puppeteer] Tạo page mới và thử lại sau 5 giây...`);
+            // Tạo page mới nếu page cũ bị hỏng (frame detached)
+            try {
+              try { await page.close(); } catch(e) {}
+              const newPage = await browser.newPage();
+              await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+              await newPage.setViewport({ width: 1280, height: 720 });
+              await newPage.setRequestInterception(true);
+              newPage.on('request', (req) => {
+                const resourceType = req.resourceType();
+                if (['image', 'media', 'font'].includes(resourceType)) {
+                  req.abort();
+                } else {
+                  req.continue();
+                }
+              });
+              page = newPage; // Gán lại page mới
+            } catch(e) {
+              logger.warn(`[Puppeteer] Không thể tạo page mới: ${e.message}`);
+            }
+            await new Promise(r => setTimeout(r, 5000));
+          } else {
+            throw navError;
+          }
         }
-      }
-
-      if (!formReady) {
-        logger.warn('[Puppeteer] ⚠️ Không tìm thấy form đăng nhập sau 15 giây! Chụp ảnh debug...');
-        await page.screenshot({ path: path.join(__dirname, '..', 'logs', 'login-form-not-found.png'), fullPage: true });
-      }
-
-      const userInputMatch = await findElementSafely(page, activeConfig.selectors.usernameInput);
-      const passInputMatch = await findElementSafely(page, activeConfig.selectors.passwordInput);
-
-      if (userInputMatch && activeConfig.username) {
-        logger.info(`[Puppeteer] Tự động nhập tài khoản "${activeConfig.username}"...`);
-        await page.type(userInputMatch.selector, activeConfig.username, { delay: 30 });
-        
-        if (passInputMatch && activeConfig.password) {
-          await page.type(passInputMatch.selector, activeConfig.password, { delay: 30 });
-        }
-
-        const btnMatch = await findElementSafely(page, activeConfig.selectors.loginBtn);
-        if (btnMatch) {
-          logger.info(`[Puppeteer] Bấm nút đăng nhập...`);
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
-            page.click(btnMatch.selector)
-          ]);
-          await new Promise(r => setTimeout(r, 2000));
-          logger.info('[Puppeteer] Đăng nhập thành công!');
-        } else {
-          logger.warn('[Puppeteer] ⚠️ Không tìm thấy nút đăng nhập!');
-        }
-      } else {
-        logger.warn(`[Puppeteer] ⚠️ Không tìm thấy ô nhập username! (userInput=${!!userInputMatch}, username=${!!activeConfig.username})`);
       }
     }
 

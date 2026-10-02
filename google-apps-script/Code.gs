@@ -292,11 +292,11 @@ function doPost(e) {
     }
 
     if (body.action === "reset") {
-      sheet.clearContents();
-      sheet.appendRow(["Ngày", "Ca 1", "Ca 2", "Ca 3", "Tổng Doanh Thu", "Cập Nhật Sau Cùng"]);
-      sheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#4a86e8").setFontColor("#ffffff");
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Đã reset toàn bộ trang tính!" }))
-        .setMimeType(ContentService.MimeType.JSON);
+      // BẢO VỆ 100% DỮ LIỆU CŨ: Tuyệt đối không xóa dữ liệu trang tính
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Bảo vệ dữ liệu cũ: Đã bỏ qua lệnh reset, giữ nguyên toàn bộ lịch sử!"
+      })).setMimeType(ContentService.MimeType.JSON);
     }
 
     var items = Array.isArray(body.data) ? body.data : (body.date ? [body] : []);

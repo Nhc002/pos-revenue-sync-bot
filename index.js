@@ -1,8 +1,27 @@
 const cron = require('node-cron');
+const https = require('https');
+const http = require('http');
 const config = require('./config');
 const logger = require('./utils/logger');
 const { scrapeAllPOSData } = require('./services/posScraper');
 const { syncToGoogleSheets, syncCashbookToGoogleSheets } = require('./services/sheetsSync');
+
+/**
+ * Kiểm tra kết nối internet bằng cách gửi HEAD request đến trang POS
+ * @returns {Promise<boolean>} true nếu có internet, false nếu không
+ */
+function checkInternet() {
+  return new Promise((resolve) => {
+    const testUrl = config.pos.loginUrl || 'https://fabi.ipos.vn/login';
+    const client = testUrl.startsWith('https') ? https : http;
+    const req = client.request(testUrl, { method: 'HEAD', timeout: 10000 }, (res) => {
+      resolve(true);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
 
 /**
  * Thực thi quy trình cào dữ liệu và đồng bộ doanh thu ca & thu chi
@@ -13,6 +32,19 @@ async function executeSyncTask(options = {}) {
   logger.info('===========================================================');
 
   try {
+    // 0. Kiểm tra kết nối internet trước khi mở trình duyệt
+    const hasInternet = await checkInternet();
+    if (!hasInternet) {
+      logger.warn('⚠️ [MainTask] KHÔNG CÓ KẾT NỐI INTERNET! Bỏ qua lượt đồng bộ này.');
+      logger.warn('[MainTask] Bot sẽ thử lại vào lượt chạy tiếp theo (30 phút sau).');
+      return {
+        success: false,
+        error: 'NO_INTERNET',
+        skippedAt: new Date().toISOString()
+      };
+    }
+    logger.info('[MainTask] ✅ Đã xác nhận có kết nối internet. Tiếp tục xử lý...');
+
     // 1. Trích xuất dữ liệu đóng ca & thu chi từ POS trong 1 phiên đăng nhập
     const { shiftData, cashbookData } = await scrapeAllPOSData(options.historical ? { historical: true } : {});
 
@@ -64,10 +96,11 @@ async function executeSyncTask(options = {}) {
 // Bắt argument từ tham số dòng lệnh
 const args = process.argv.slice(2);
 const isOnce = args.includes('--once') || args.includes('-o');
+const isHistorical = args.includes('--historical') || args.includes('-h');
 
 if (isOnce) {
-  logger.info('[App] Khởi chạy ở chế độ CHẠY 1 LẦN (--once)...');
-  executeSyncTask().then(() => {
+  logger.info(`[App] Khởi chạy ở chế độ CHẠY 1 LẦN (--once)${isHistorical ? ' + LỊCH SỬ (--historical)' : ''}...`);
+  executeSyncTask({ historical: isHistorical }).then(() => {
     logger.info('[App] Đã thoát tiến trình chạy 1 lần.');
     process.exit(0);
   });
@@ -97,7 +130,6 @@ if (isOnce) {
   }
 
   // Khởi động HTTP Health Server phục vụ Cloud PaaS (Render, Railway, Koyeb)
-  const http = require('http');
   const PORT = process.env.PORT || 3000;
 
   const server = http.createServer(async (req, res) => {
@@ -155,13 +187,12 @@ if (isOnce) {
   // Self-ping giữ cho Render Free Tier không bị ngủ (ping mỗi 14 phút)
   const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
   if (RENDER_URL) {
-    const https = require('https');
-    const http2 = require('http');
+    // http & https đã được import ở đầu file
     const pingInterval = 14 * 60 * 1000; // 14 phút
 
     setInterval(() => {
       const pingUrl = `${RENDER_URL}/`;
-      const client = pingUrl.startsWith('https') ? https : http2;
+      const client = pingUrl.startsWith('https') ? https : http;
       client.get(pingUrl, (res) => {
         logger.info(`[SelfPing] Ping ${pingUrl} → HTTP ${res.statusCode} (giữ service alive)`);
       }).on('error', (err) => {

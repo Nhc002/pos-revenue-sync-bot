@@ -58,14 +58,8 @@ async function syncToGoogleSheets(shiftData, customWebhookUrl = '', maxRetries =
     return { success: false, reason: 'unconfigured_webhook' };
   }
 
-  // Bước 1: Xoá sạch dữ liệu cũ trên Google Sheet trước khi ghi mới
-  logger.info('[SheetsSync] Đang xoá dữ liệu cũ trên Google Sheet (reset)...');
-  const resetResult = await postToWebhook(webhookUrl, { action: 'reset' }, maxRetries);
-  if (resetResult.success) {
-    logger.info('[SheetsSync] Đã xoá sạch dữ liệu cũ thành công!');
-  } else {
-    logger.warn('[SheetsSync] Không thể xoá dữ liệu cũ. Tiếp tục ghi đè...');
-  }
+  // Chế độ UPSERT: Gửi dữ liệu mới, Google Apps Script tự tìm ngày đã có → cập nhật,
+  // ngày chưa có → thêm dòng mới. KHÔNG xóa dữ liệu cũ.
 
   // Bước 2: Gom nhóm các ca thành từng dòng Ngày ({ date, ca1, ca2, ca3 })
   const rawItems = Array.isArray(shiftData) ? shiftData : [shiftData];
